@@ -29,6 +29,7 @@
 #define FFT_SLIDING (8)
 #define FLOAT_PRECISION (6)
 #define CHIRP_LENGTH (64)
+#define CORRELATION_THRESHOLD (0.9)
 //#elements * ( decimal digits + 3 integer digits + 1 dot + 1 sign + 1 space ) + \r\n
 #define UART_BUFFER_LENGTH (FFT_LENGTH * (FLOAT_PRECISION + 6)  + 2)
 #include "math.h"
@@ -62,6 +63,7 @@ float32_t tempValueBuffer[FFT_LENGTH];
 volatile uint16_t valueBufferIndex = 0;
 float32_t fftBuffer[FFT_LENGTH] = { [0 ... FFT_LENGTH - 1] = 0.0 };
 float32_t magnitudes[FFT_LENGTH / 2];
+//TODO: should be changed to a more effective chirp signal (search on a signal processing book?)
 const float32_t chirpBuffer[CHIRP_LENGTH] = { 0.1142, 0.0818, 0.0345, -0.0191,
 		-0.0692, -0.1067, -0.1247, -0.1199, -0.0931, -0.0494, 0.0034, 0.0555,
 		0.0975, 0.1217, 0.1236, 0.1030, 0.0635, 0.0124, -0.0410, -0.0868,
@@ -78,7 +80,7 @@ const float32_t chirpBuffer[CHIRP_LENGTH] = { 0.1142, 0.0818, 0.0345, -0.0191,
 		0.1122, 0.1256, 0.1160, 0.0852, 0.0388, -0.0146, -0.0654, -0.1043,
 		-0.1240, -0.1211, -0.0961, -0.0535, -0.0011, 0.0515, 0.0946, 0.1205,
 		0.1244, 0.1055, 0.0673, 0.0169, -0.0367, -0.0835, -0.1151, -0.1256,
-		-0.1132, -0.0801, -0.0323, 0.0213 }; //TODO: MANUALLY populate the buffer
+		-0.1132, -0.0801, -0.0323, 0.0213 };
 float32_t receivedChirpBuffer[CHIRP_LENGTH] = { [0 ... CHIRP_LENGTH - 1] = 0.0 };
 float32_t receivedTempChirpBuffer[CHIRP_LENGTH] = { [0 ... CHIRP_LENGTH - 1
 		] = 0.0 };
@@ -87,6 +89,7 @@ float32_t chirpFftMagnitude[CHIRP_LENGTH / 2];
 float32_t chirpOffsetValue[CHIRP_LENGTH];
 float32_t chirpCorrelation[2 * CHIRP_LENGTH - 1];
 volatile float32_t receivedChirpNorm;
+volatile float32_t receivedChirpOffset;
 arm_rfft_fast_instance_f32 fftInstance, chirpFftInstance;
 volatile uint8_t computeFFT = 0;
 volatile uint8_t receivingData = 0;
@@ -397,24 +400,21 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 		}
 	} else {
 		//trying to receive chirp
-
+		receivedChirpOffset = 0.0;
+		//inserting new ADC value in last (chirp length) buffer position
+		//after sliding previous values
 		for (int i = 0; i < CHIRP_LENGTH - 1; i++) {
 			receivedChirpBuffer[i] = receivedChirpBuffer[i + 1];
+			receivedChirpOffset += receivedChirpBuffer[i];
 		}
 		receivedChirpBuffer[CHIRP_LENGTH - 1] = HAL_ADC_GetValue(&hadc1);
-		memcpy(receivedTempChirpBuffer, receivedChirpBuffer,
-				sizeof(float32_t) * CHIRP_LENGTH);
-		arm_rfft_fast_f32(&chirpFftInstance, receivedTempChirpBuffer,
-				chirpFftBuffer, 0);
-		arm_cmplx_mag_f32(chirpFftBuffer, chirpFftMagnitude, CHIRP_LENGTH / 2);
-		memcpy(receivedTempChirpBuffer, receivedChirpBuffer,
-				sizeof(float32_t) * CHIRP_LENGTH);
+		receivedChirpOffset += receivedChirpBuffer[CHIRP_LENGTH -1];
+		receivedChirpOffset = receivedChirpOffset/CHIRP_LENGTH;
 		for (int i = 0; i < CHIRP_LENGTH; i++) {
-			chirpOffsetValue[i] = chirpFftMagnitude[0] / CHIRP_LENGTH;
-			receivedChirpNorm += pow(receivedTempChirpBuffer[i], 2);
+			chirpOffsetValue[i] = receivedChirpOffset;
 		}
+		memcpy(receivedTempChirpBuffer,receivedChirpBuffer,CHIRP_LENGTH);
 		//remove offset
-
 		arm_sub_f32(receivedTempChirpBuffer, chirpOffsetValue,
 				receivedTempChirpBuffer, CHIRP_LENGTH);
 		//normalize and correlate
@@ -426,8 +426,12 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 		for (int i = 0; i < CHIRP_LENGTH; i++) {
 			receivedTempChirpBuffer[i] = receivedTempChirpBuffer[i]/receivedChirpNorm;
 		}
+		//detect chirp by correlation
 		arm_correlate_f32(receivedTempChirpBuffer, CHIRP_LENGTH, chirpBuffer,
 		CHIRP_LENGTH, chirpCorrelation);
+		//TODO: evaluate correlation threshold!
+		if(chirpCorrelation[CHIRP_LENGTH - 1] > CORRELATION_THRESHOLD)
+			receivingData = 1;
 
 	}
 	/*If continuousconversion mode is DISABLED uncomment below*/
