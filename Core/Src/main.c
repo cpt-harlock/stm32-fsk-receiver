@@ -30,6 +30,10 @@
 #define FLOAT_PRECISION (6)
 #define CHIRP_LENGTH (64)
 #define CORRELATION_THRESHOLD (0.9)
+#define FREQ_ONE_BIN (11)
+#define FREQ_ZERO_BIN (10)
+#define FSK_MESSAGE_BYTE_SIZE (4) //receiving 4 bytes
+#define FSK_MESSAGE_BIT_SIZE (FSK_MESSAGE_BYTE_SIZE*8)
 //#elements * ( decimal digits + 3 integer digits + 1 dot + 1 sign + 1 space ) + \r\n
 #define UART_BUFFER_LENGTH (FFT_LENGTH * (FLOAT_PRECISION + 6)  + 2)
 #include "math.h"
@@ -72,15 +76,7 @@ const float32_t chirpBuffer[CHIRP_LENGTH] = { 0.1142, 0.0818, 0.0345, -0.0191,
 		-0.1222, -0.0989, -0.0575, -0.0056, 0.0473, 0.0916, 0.1192, 0.1249,
 		0.1079, 0.0711, 0.0213, -0.0323, -0.0801, -0.1132, -0.1256, -0.1151,
 		-0.0835, -0.0367, 0.0169, 0.0673, 0.1055, 0.1244, 0.1205, 0.0946,
-		0.0514, -0.0011, -0.0535, -0.0961, -0.1211, -0.1240, -0.1042, -0.0654,
-		-0.0146, 0.0388, 0.0852, 0.1160, 0.1256, 0.1122, 0.0783, 0.0301,
-		-0.0236, -0.0730, -0.1090, -0.1252, -0.1184, -0.0900, -0.0452, 0.0079,
-		0.0596, 0.1003, 0.1228, 0.1228, 0.1003, 0.0595, 0.0079, -0.0452,
-		-0.0900, -0.1184, -0.1252, -0.1090, -0.0729, -0.0235, 0.0302, 0.0784,
-		0.1122, 0.1256, 0.1160, 0.0852, 0.0388, -0.0146, -0.0654, -0.1043,
-		-0.1240, -0.1211, -0.0961, -0.0535, -0.0011, 0.0515, 0.0946, 0.1205,
-		0.1244, 0.1055, 0.0673, 0.0169, -0.0367, -0.0835, -0.1151, -0.1256,
-		-0.1132, -0.0801, -0.0323, 0.0213 };
+		0.0514, -0.0011, -0.0535, -0.0961 };
 float32_t receivedChirpBuffer[CHIRP_LENGTH] = { [0 ... CHIRP_LENGTH - 1] = 0.0 };
 float32_t receivedTempChirpBuffer[CHIRP_LENGTH] = { [0 ... CHIRP_LENGTH - 1
 		] = 0.0 };
@@ -93,9 +89,11 @@ volatile float32_t receivedChirpOffset;
 arm_rfft_fast_instance_f32 fftInstance, chirpFftInstance;
 volatile uint8_t computeFFT = 0;
 volatile uint8_t receivingData = 0;
+volatile uint16_t receivedBitSize = 0;
 volatile uint16_t computeFFTLastIndex = 0;
 volatile uint16_t savedComputeFFTLastIndex;
 char uartBuffer[UART_BUFFER_LENGTH] = { 0 };
+uint8_t receivedData[FSK_MESSAGE_BYTE_SIZE];
 
 /* USER CODE END PV */
 
@@ -105,6 +103,8 @@ static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
+//convert ADC values and copy into tempValueBuffer
+static void convertLastADCValueBatch(void);
 
 /* USER CODE END PFP */
 
@@ -119,7 +119,7 @@ static void MX_USART1_UART_Init(void);
  */
 int main(void) {
 	/* USER CODE BEGIN 1 */
-	size_t uartStringLen = 0;
+//	size_t uartStringLen = 0;
 	float32_t maxValue;
 	int maxValueIndex;
 
@@ -150,9 +150,6 @@ int main(void) {
 //  HAL_ADC_Start_DMA(hadc, pData, Length)
 	while (ARM_MATH_SUCCESS != arm_rfft_fast_init_f32(&fftInstance, FFT_LENGTH))
 		;
-	while (ARM_MATH_SUCCESS
-			!= arm_rfft_fast_init_f32(&chirpFftInstance, CHIRP_LENGTH))
-		;
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -161,49 +158,12 @@ int main(void) {
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
-//	  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-//	  HAL_Delay(100);
 		if (computeFFT != 0) {
-			HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_10);
+//			HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_10);
 
+			convertLastADCValueBatch();
+			//TODO: note that sensor value conversion is useless, since conversion doesn't affect FFT
 			//if we need to compute FFT with values at both ends of array...
-			if (computeFFTLastIndex < FFT_LENGTH) {
-				for (int i = computeFFTLastIndex - FFT_LENGTH
-						+ FFT_BUFFER_LENGTH, j = 0; i < FFT_BUFFER_LENGTH;
-						i++, j++) {
-					//ADC value mapping
-					valueBuffer[i] *= (3300.0 / 4500.0);
-					//sensor conversion
-					valueBuffer[i] = valueBuffer[i] - 1680;
-					valueBuffer[i] = valueBuffer[i] / (4 * 12.2 * 100);
-					tempValueBuffer[j] = valueBuffer[i];
-				}
-
-				for (int i = 0, j = FFT_LENGTH - computeFFTLastIndex;
-						i < computeFFTLastIndex; i++, j++) {
-					valueBuffer[i] *= (3300.0 / 4500.0);
-					//sensor conversion
-					valueBuffer[i] = valueBuffer[i] - 1680;
-					valueBuffer[i] = valueBuffer[i] / (4 * 12.2 * 100);
-					tempValueBuffer[j] = valueBuffer[i];
-
-				}
-			} else {
-				for (int i = 0; i < FFT_LENGTH; i++) {
-					valueBuffer[i + computeFFTLastIndex - FFT_LENGTH] *= (3300.0
-							/ 4500.0);
-					//sensor conversion
-					valueBuffer[i + computeFFTLastIndex - FFT_LENGTH] =
-							valueBuffer[i + computeFFTLastIndex - FFT_LENGTH]
-									- 1680;
-					valueBuffer[i + computeFFTLastIndex - FFT_LENGTH] =
-							valueBuffer[i + computeFFTLastIndex - FFT_LENGTH]
-									/ (4 * 12.2 * 100);
-
-					tempValueBuffer[i] = valueBuffer[i + computeFFTLastIndex
-							- FFT_LENGTH];
-				}
-			}
 			arm_rfft_fast_f32(&fftInstance, tempValueBuffer, fftBuffer, 0);
 			arm_cmplx_mag_f32(fftBuffer, magnitudes, FFT_LENGTH / 2);
 			maxValue = magnitudes[0];
@@ -215,18 +175,12 @@ int main(void) {
 					maxValueIndex = i;
 				}
 			}
-//			sprintf(uartBuffer,"Max value index: %d\r\n",maxValueIndex);
-//			for (int i = 0; i < FFT_LENGTH / 2 - 1; i++) {
-//				uartStringLen = strlen(uartBuffer);
-//				sprintf(&uartBuffer[uartStringLen], "%+011.*f ",
-//				FLOAT_PRECISION, magnitudes[i]);
-//			}
-//			sprintf(&uartBuffer[strlen(uartBuffer)], "%+011.*f\n",
-//			FLOAT_PRECISION, magnitudes[FFT_LENGTH / 2 - 1]);
-//			HAL_UART_Transmit(&huart1, (uint8_t*) uartBuffer,
-//					strlen(uartBuffer), 1000);
-//			uartBuffer[0] = 0;
-			HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_10);
+
+			if(maxValueIndex == FREQ_ONE_BIN)
+				receivedData[(receivedBitSize-1)/8] |= 1 << (7 - ((receivedBitSize-1) % 8));
+			else
+				receivedData[(receivedBitSize-1)/8] &= ~(1 << (7 - ((receivedBitSize-1) % 8)));
+//			HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_10);
 			computeFFT = 0;
 		}
 	}
@@ -392,12 +346,17 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 	if (receivingData) {
 		valueBuffer[valueBufferIndex] = HAL_ADC_GetValue(&hadc1);
 		valueBufferIndex = (valueBufferIndex + 1) % FFT_BUFFER_LENGTH;
+		//TODO: this check shouldn't be required, since fft computation should be much faster than ADC ...
 		if (computeFFT == 0) {
 			if (valueBufferIndex % FFT_LENGTH == 0) {
 				computeFFTLastIndex = valueBufferIndex;
 				computeFFT = 1;
+				receivedBitSize++;
 			}
 		}
+		if (receivedBitSize == FSK_MESSAGE_BIT_SIZE)
+			receivingData = 0;
+
 	} else {
 		//trying to receive chirp
 		receivedChirpOffset = 0.0;
@@ -408,34 +367,75 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 			receivedChirpOffset += receivedChirpBuffer[i];
 		}
 		receivedChirpBuffer[CHIRP_LENGTH - 1] = HAL_ADC_GetValue(&hadc1);
-		receivedChirpOffset += receivedChirpBuffer[CHIRP_LENGTH -1];
-		receivedChirpOffset = receivedChirpOffset/CHIRP_LENGTH;
+		receivedChirpOffset += receivedChirpBuffer[CHIRP_LENGTH - 1];
+		receivedChirpOffset = receivedChirpOffset / CHIRP_LENGTH;
 		for (int i = 0; i < CHIRP_LENGTH; i++) {
 			chirpOffsetValue[i] = receivedChirpOffset;
 		}
-		memcpy(receivedTempChirpBuffer,receivedChirpBuffer,CHIRP_LENGTH);
+		memcpy(receivedTempChirpBuffer, receivedChirpBuffer, CHIRP_LENGTH);
 		//remove offset
 		arm_sub_f32(receivedTempChirpBuffer, chirpOffsetValue,
 				receivedTempChirpBuffer, CHIRP_LENGTH);
 		//normalize and correlate
 		receivedChirpNorm = 0.0;
 		for (int i = 0; i < CHIRP_LENGTH; i++) {
-			receivedChirpNorm = receivedChirpNorm + receivedTempChirpBuffer[i]*receivedTempChirpBuffer[i];
+			receivedChirpNorm = receivedChirpNorm
+					+ receivedTempChirpBuffer[i] * receivedTempChirpBuffer[i];
 		}
 		receivedChirpNorm = sqrt(receivedChirpNorm);
 		for (int i = 0; i < CHIRP_LENGTH; i++) {
-			receivedTempChirpBuffer[i] = receivedTempChirpBuffer[i]/receivedChirpNorm;
+			receivedTempChirpBuffer[i] = receivedTempChirpBuffer[i]
+					/ receivedChirpNorm;
 		}
 		//detect chirp by correlation
 		arm_correlate_f32(receivedTempChirpBuffer, CHIRP_LENGTH, chirpBuffer,
 		CHIRP_LENGTH, chirpCorrelation);
 		//TODO: evaluate correlation threshold!
-		if(chirpCorrelation[CHIRP_LENGTH - 1] > CORRELATION_THRESHOLD)
+		if (chirpCorrelation[CHIRP_LENGTH - 1] > CORRELATION_THRESHOLD) {
+			receivedBitSize = 0;
 			receivingData = 1;
+		}
 
 	}
 	/*If continuousconversion mode is DISABLED uncomment below*/
 	HAL_ADC_Start_IT(&hadc1);
+}
+
+static void convertLastADCValueBatch() {
+	if (computeFFTLastIndex < FFT_LENGTH) {
+		for (int i = computeFFTLastIndex - FFT_LENGTH + FFT_BUFFER_LENGTH,
+				j = 0; i < FFT_BUFFER_LENGTH; i++, j++) {
+			//ADC value mapping
+			valueBuffer[i] *= (3300.0 / 4500.0);
+			//sensor conversion
+			valueBuffer[i] = valueBuffer[i] - 1680;
+			valueBuffer[i] = valueBuffer[i] / (4 * 12.2 * 100);
+			tempValueBuffer[j] = valueBuffer[i];
+		}
+
+		for (int i = 0, j = FFT_LENGTH - computeFFTLastIndex;
+				i < computeFFTLastIndex; i++, j++) {
+			valueBuffer[i] *= (3300.0 / 4500.0);
+			//sensor conversion
+			valueBuffer[i] = valueBuffer[i] - 1680;
+			valueBuffer[i] = valueBuffer[i] / (4 * 12.2 * 100);
+			tempValueBuffer[j] = valueBuffer[i];
+
+		}
+	} else {
+		for (int i = 0; i < FFT_LENGTH; i++) {
+			valueBuffer[i + computeFFTLastIndex - FFT_LENGTH] *= (3300.0
+					/ 4500.0);
+			//sensor conversion
+			valueBuffer[i + computeFFTLastIndex - FFT_LENGTH] = valueBuffer[i
+					+ computeFFTLastIndex - FFT_LENGTH] - 1680;
+			valueBuffer[i + computeFFTLastIndex - FFT_LENGTH] = valueBuffer[i
+					+ computeFFTLastIndex - FFT_LENGTH] / (4 * 12.2 * 100);
+
+			tempValueBuffer[i] = valueBuffer[i + computeFFTLastIndex
+					- FFT_LENGTH];
+		}
+	}
 }
 
 /* USER CODE END 4 */

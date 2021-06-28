@@ -1,5 +1,6 @@
 ################################################################################
 # Automatically-generated file. Do not edit!
+# Toolchain: GNU Tools for STM32 (9-2020-q2-update)
 ################################################################################
 
 -include ../makefile.init
@@ -43,6 +44,12 @@ endif
 
 -include ../makefile.defs
 
+OPTIONAL_TOOL_DEPS := \
+$(wildcard ../makefile.defs) \
+$(wildcard ../makefile.init) \
+$(wildcard ../makefile.targets) \
+
+
 BUILD_ARTIFACT_NAME := magnetic_sensor
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX := 
@@ -69,22 +76,22 @@ all: main-build
 main-build: magnetic_sensor.elf secondary-outputs
 
 # Tool invocations
-magnetic_sensor.elf: $(OBJS) $(USER_OBJS) /home/harlock/Documents/stm32-fsk-receiver/STM32F401RETX_FLASH.ld
-	arm-none-eabi-g++ -o "magnetic_sensor.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/harlock/Documents/stm32-fsk-receiver/STM32F401RETX_FLASH.ld" -Wl,-Map="magnetic_sensor.map" -Wl,--gc-sections -static -L"/home/harlock/Documents/stm32-fsk-receiver/Middlewares/ST/ARM/DSP/Lib" -L../Middlewares/ST/ARM/DSP/Lib --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
+magnetic_sensor.elf: $(OBJS) $(USER_OBJS) /home/harlock/Documents/stm32-fsk-receiver/STM32F401RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-g++ -o "magnetic_sensor.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/harlock/Documents/stm32-fsk-receiver/STM32F401RETX_FLASH.ld" -Wl,-Map="magnetic_sensor.map" -Wl,--gc-sections -static -Wl,--start-group -larm_cortexM4lf_math -Wl,--end-group -L"/home/harlock/Documents/stm32-fsk-receiver/Middlewares/ST/ARM/DSP/Lib" -L../Middlewares/ST/ARM/DSP/Lib --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
-default.size.stdout: $(EXECUTABLES)
+default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	arm-none-eabi-size  $(EXECUTABLES)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-magnetic_sensor.list: $(EXECUTABLES)
+magnetic_sensor.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "magnetic_sensor.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
-magnetic_sensor.bin: $(EXECUTABLES)
+magnetic_sensor.bin: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	arm-none-eabi-objcopy  -O binary $(EXECUTABLES) "magnetic_sensor.bin"
 	@echo 'Finished building: $@'
 	@echo ' '
